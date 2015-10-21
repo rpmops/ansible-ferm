@@ -1,50 +1,14 @@
 ---
 
-- name: Calculate debconf answer
-  set_fact:
-    ferm_register_debconf: |
-      {% if (ferm | bool and (ansible_local|d() and
-             (ansible_local.root|d() and (ansible_local.root.flags | intersect(ferm_root_flags.cap_net_admin)) or
-             (ansible_local.cap12s|d() and (not ansible_local.cap12s.enabled | bool or
-             (ansible_local.cap12s.enabled | bool and 'cap_net_admin' in ansible_local.cap12s.list)))))) %}
-      yes{% else %}no{% endif %}
-
-- name: Configure ferm status in debconf
-  debconf:
-    name: 'ferm'
-    question: 'ferm/enable'
-    vtype: 'boolean'
-    value: '{{ "yes" if ferm_register_debconf else "no" }}'
-
 - name: Ensure ferm is installed
-  apt:
+  yum:
     name: '{{ item }}'
     state: 'present'
-    install_recommends: 'no'
   with_items: ferm_packages
-  when: (ferm | bool and (ansible_local|d() and
-         (ansible_local.root|d() and (ansible_local.root.flags | intersect(ferm_root_flags.cap_net_admin)) or
-         (ansible_local.cap12s|d() and (not ansible_local.cap12s.enabled | bool or
-         (ansible_local.cap12s.enabled | bool and 'cap_net_admin' in ansible_local.cap12s.list))))))
+  when: ferm|bool
 
 - name: Install ferm configuration directories
   script: 'script/install-directories.sh creates=/etc/ferm/filter/input'
-
-- name: Patch ferm init script to add custom hooks
-  include: patch_ferm.yml
-  when: (ferm | bool and (ansible_local|d() and
-         (ansible_local.root|d() and (ansible_local.root.flags | intersect(ferm_root_flags.cap_net_admin)) or
-         (ansible_local.cap12s|d() and (not ansible_local.cap12s.enabled | bool or
-         (ansible_local.cap12s.enabled | bool and 'cap_net_admin' in ansible_local.cap12s.list))))))
-
-- name: Configure ferm default variables (pre)
-  template:
-    src: 'etc/default/ferm-pre.j2'
-    dest: '/etc/default/ferm'
-    owner: 'root'
-    group: 'root'
-    mode: '0644'
-  notify: [ 'Restart ferm' ]
 
 - name: Configure main ferm config file
   template:
@@ -53,7 +17,6 @@
     owner: 'root'
     group: 'adm'
     mode: '0644'
-  notify: [ 'Restart ferm' ]
 
 - name: Allow SSH access from Ansible Controller
   template:
@@ -62,18 +25,16 @@
     owner: 'root'
     group: 'adm'
     mode: '0644'
-  notify: [ 'Restart ferm' ]
 
-- name: Configure forwarding in ip(6)tables if enabled
+- name: Configure forwarding in iptables if enabled
   template:
     src: 'etc/ferm/ferm.d/10_forward.conf.j2'
     dest: '/etc/ferm/ferm.d/10_forward.conf'
     owner: 'root'
     group: 'adm'
     mode: '0644'
-  notify: [ 'Restart ferm' ]
 
-- name: Remove ip(6)tables rules if requested
+- name: Remove iptables rules if requested
   file:
     path: '/etc/ferm/{{ item.table | d("ferm.d") }}/{{ item.weight | default("50") }}_{{ item.filename | default(item.type + "_" + item.name | default((item.dport[0] if item.dport|d() else "rules"))) }}.conf'
     state: 'absent'
@@ -87,7 +48,7 @@
          (item.delete is defined and item.delete | bool))
   tags: [ 'role::ferm:rules' ]
 
-- name: Configure ip(6)tables rules
+- name: Configure iptables rules
   template:
     src: 'etc/ferm/{{ item.category | d(item.table | d("ferm.d")) }}/{{ item.type }}.conf.j2'
     dest: '/etc/ferm/{{ item.table | d("ferm.d") }}/{{ item.weight | default("50") }}_{{ item.filename | default(item.type + "_" + item.name | default((item.dport[0] if item.dport|d() else "rules"))) }}.conf'
@@ -134,25 +95,41 @@
   tags: [ 'role::ferm:rules' ]
 
 - name: Apply iptables rules if ferm is enabled
-  service:
-    name: 'ferm'
-    state: 'restarted'
+  shell: ferm /etc/ferm/ferm.conf
   changed_when: False
-  when: (ferm | bool and (ansible_local|d() and
-         (ansible_local.root|d() and (ansible_local.root.flags | intersect(ferm_root_flags.cap_net_admin)) or
-         (ansible_local.cap12s|d() and (not ansible_local.cap12s.enabled | bool or
-         (ansible_local.cap12s.enabled | bool and 'cap_net_admin' in ansible_local.cap12s.list))))))
+  when: ferm|bool
+  tags: [ 'role::ferm:rules' ]
+
+- name: Save iptables rules if ferm is enabled
+  shell: /etc/init.d/{{ item }} save
+  with_items: ferm_service_names
+  changed_when: False
+  when: ferm|bool
+  tags: [ 'role::ferm:rules' ]
+
+- name: Ensure iptables autostart
+  service:
+    name: '{{ item }}'
+    enabled: 'yes'
+  with_items: ferm_service_names
+  when: ferm|bool
   tags: [ 'role::ferm:rules' ]
 
 - name: Clear iptables rules if ferm is disabled
   service:
-    name: 'ferm'
+    name: '{{ item }}'
     state: 'stopped'
-  when: ((not ferm | bool and ferm_flush | bool) and (ansible_local|d() and
-         (ansible_local.root|d() and (ansible_local.root.flags | intersect(ferm_root_flags.cap_net_admin)) or
-         (ansible_local.cap12s|d() and (not ansible_local.cap12s.enabled | bool or
-         (ansible_local.cap12s.enabled | bool and 'cap_net_admin' in ansible_local.cap12s.list))))))
+  with_items: ferm_service_names
+  when: (not ferm | bool and ferm_flush | bool)
   tags: [ 'role::ferm:rules' ]
+
+- name: Ensure that sysctl.d directory exists
+  file:
+    path: '/etc/sysctl.d'
+    state: 'directory'
+    owner: 'root'
+    group: 'root'
+    mode: '0755'
 
 - name: Configure sysctl
   template:
@@ -163,40 +140,6 @@
     mode: '0644'
   notify: [ 'Reload sysctl' ]
   tags: [ 'role::ferm:rules' ]
-
-- name: Ensure that /etc/network/if-pre-up.d exists
-  file:
-    path: '/etc/network/if-pre-up.d'
-    state: 'directory'
-    owner: 'root'
-    group: 'root'
-    mode: '0755'
-
-- name: Configure forwarding in ifupdown if enabled
-  template:
-    src: 'etc/network/if-pre-up.d/ferm-forward.j2'
-    dest: '/etc/network/if-pre-up.d/ferm-forward'
-    owner: 'root'
-    group: 'root'
-    mode: '0755'
-  tags: [ 'role::ferm:rules' ]
-
-- name: Configure ferm default variables (post)
-  template:
-    src: 'etc/default/ferm-post.j2'
-    dest: '/etc/default/ferm'
-    owner: 'root'
-    group: 'root'
-    mode: '0644'
-  notify: [ 'Restart ferm' ]
-
-- name: Ensure that Ansible local facts directory exists
-  file:
-    path: '/etc/ansible/facts.d'
-    state: 'directory'
-    owner: 'root'
-    group: 'root'
-    mode: '0755'
 
 - name: Save ferm local facts
   template:

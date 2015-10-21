@@ -10,16 +10,19 @@ ferm: True
 ferm_flush: '{{ ferm | bool }}'
 
 # List of packages to install
-ferm_packages: [ 'ferm', 'patch' ]
-
-# Enable support for executing hooks at certain points in the init script.
-ferm_init_hooks: True
+ferm_packages: [ 'ferm', 'iptables', 'iptables-ipv6' ]
 
 # List of iptables domains enabled in main ferm firewall
 # Currently supported domains:
 #   - 'ip'  - enables IPv4 support (iptables)
 #   - 'ip6' - enables IPv6 support (ip6tables)
-ferm_filter_domains: [ 'ip', 'ip6' ]
+ferm_filter_domains: [ 'ip' ]
+
+# List of iptables names enabled in main ferm firewall
+# Currently supported names:
+#   - 'iptables'  - enables IPv4 support
+#   - 'ip6tables' - enables IPv6 support
+ferm_service_names: [ 'iptables' ]
 
 # Optional list of CIDR hosts which are not included in ssh port recent filter
 # and won't be blocked by the firewall in case of too many connections.
@@ -111,9 +114,9 @@ ferm_filter_conntrack:
 # Enable or disable fail2ban integration. ferm will send fail2ban reload
 # command after its own configuration is reloaded. If fail2ban is not present
 # or turned off, nothing will happen.
-ferm_fail2ban: True
+ferm_fail2ban: False
 
-# Enable forwarding in ip(6)tables. This option can be used by other roles and
+# Enable forwarding in iptables. This option can be used by other roles and
 # its status is saved in Ansible local facts, which will override variable
 # status from role defaults or inventory.
 ferm_forward: False
@@ -122,16 +125,8 @@ ferm_forward: False
 # interfaces will be forwarded to all hosts
 ferm_external_interfaces:
   - '{{ ansible_default_ipv4.interface | default("") }}'
-  - '{{ ansible_default_ipv6.interface | default("") }}'
 
 # List of interfaces that are connected to internal network, traffic on these
 # interfaces will be forwarded only between hosts on that network
 ferm_internal_interfaces: [ 'br1' ]
-
-# List of global root flags to check
-ferm_root_flags:
-
-  # If these flags are present, ignore status of "cap_net_admin" capability and
-  # manage firewall using ferm
-  cap_net_admin: [ 'ignore-cap12s', 'ignore-cap_net_admin' ]
 

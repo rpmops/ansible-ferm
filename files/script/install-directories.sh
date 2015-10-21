@@ -29,14 +29,6 @@ directories=(
   "${root}/mangle/forward"
   "${root}/mangle/output"
   "${root}/mangle/postrouting"
-
-  "${root}/hooks"
-  "${root}/hooks/pre-start.d"
-  "${root}/hooks/post-start.d"
-  "${root}/hooks/pre-stop.d"
-  "${root}/hooks/post-stop.d"
-  "${root}/hooks/pre-reload.d"
-  "${root}/hooks/post-reload.d"
 )
 
 install -o root -g adm -m 2750 -d ${directories[@]}
